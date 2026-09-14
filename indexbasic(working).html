@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<!-- GuiltFreeAI - local LLM chat that runs entirely in the browser.
+     No datacenters, no token limits, no API keys, no data leaving your machine, and no costs.
+     I will probably have to rebuild every time the wllama API changes. Yay. -->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GuiltFreeAI</title>
+    <style>
+        :root { --primary: #10b981; --bg: #f3f4f6; --text: #1f2937; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); max-width: 800px; margin: 0 auto; padding: 20px; }
+        header { text-align: center; margin-bottom: 20px; }
+        h1 { margin-bottom: 5px; color: #047857; }
+
+        .panel { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        #setup-panel { margin-bottom: 20px; text-align: center; }
+
+        /* Loading Bar */
+        #progress-container { display: none; width: 100%; background: #e5e7eb; border-radius: 8px; margin-top: 15px; overflow: hidden; }
+        #progress-bar { width: 0%; height: 24px; background: var(--primary); text-align: center; color: white; font-size: 0.9em; line-height: 24px; font-weight: bold; transition: width 0.2s; }
+
+        /* chat area */
+        .chat-container { display: none; height: 60vh; flex-direction: column; }
+        .messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+
+        .message { padding: 12px 16px; border-radius: 18px; max-width: 85%; line-height: 1.4; white-space: pre-wrap; word-wrap: break-word; }
+        .msg-user { background: var(--primary); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
+        .msg-ai { background: #e5e7eb; color: #1f2937; align-self: flex-start; border-bottom-left-radius: 4px; }
+        .msg-meta { display: block; margin-top: 8px; font-size: 0.75em; color: #6b7280; font-weight: 500; text-align: right; }
+
+        .image-preview { max-width: 200px; max-height: 200px; border-radius: 8px; margin-top: 10px; display: none; }
+        .msg-user img { max-width: 100%; border-radius: 8px; margin-top: 8px; }
+
+        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+        .thinking-indicator { animation: pulse 1.5s infinite ease-in-out; font-weight: bold; color: #047857; }
+
+        .input-area { display: flex; gap: 10px; padding: 15px; border-top: 1px solid #e5e7eb; transition: all 0.2s ease; }
+        /* highlight when dragging a file over the input zone */
+        .input-area.drag-active { background-color: #d1fae5; border: 2px dashed var(--primary); }
+
+        input[type="text"] { flex: 1; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; outline: none; }
+        input[type="text"]:focus { border-color: var(--primary); }
+        button, select { background: var(--primary); color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: opacity 0.2s; }
+        select { background: white; color: var(--text); border: 1px solid #d1d5db; margin-top: 10px; padding: 8px 12px;}
+        button:disabled, select:disabled, input:disabled { opacity: 0.5; cursor: not-allowed; }
+        button:hover:not(:disabled) { opacity: 0.9; }
+
+        .btn-danger { background: #ef4444; }
+        .btn-danger:hover:not(:disabled) { background: #dc2626; }
+
+        .status-badge { display: inline-block; padding: 6px 14px; background: #e5e7eb; border-radius: 20px; font-size: 0.9em; color: #4b5563; font-weight: 500; margin-bottom: 10px;}
+        .doc-badge { background: #d1fae5; color: #047857; border: 1px solid #10b981; margin-right: 8px; margin-bottom: 8px; display: inline-flex; align-items: center; }
+        .doc-remove { cursor: pointer; font-weight: bold; padding: 0 4px; margin-left: 6px; }
+        .doc-remove:hover { color: #ef4444; }
+
+        /* model picker bar under the header */
+        .model-bar { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 20px; padding: 12px 20px; background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .model-buttons { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;}
+        .model-btn { background: #e5e7eb; color: var(--text); border: 1px solid #d1d5db; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85em; font-weight: bold; transition: all 0.2s; }
+        .model-btn:hover:not(:disabled) { background: #d1d5db; }
+        .model-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+        .search-toggle { display: flex; align-items: center; gap: 6px; background: #e5e7eb; border: 1px solid #d1d5db; border-radius: 8px; padding: 0 12px; font-size: 0.85em; font-weight: bold; color: #4b5563; cursor: pointer; white-space: nowrap; user-select: none; }
+        .search-toggle input { accent-color: var(--primary); width: 16px; height: 16px; cursor: pointer; margin: 0; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>GuiltFreeAI</h1>
+    <p>100% Local. Private. In-Browser.</p>
+    <div id="global-status" class="status-badge">Scanning directory for models...</div>
+
+    <div id="engine-controls" style="display: block; margin-top: 10px;">
+        <label for="hardware-select" style="font-size:0.9em; font-weight:bold; margin-right: 5px;">Engine: </label>
+        <select id="hardware-select">
+            <option value="webgpu">WebGPU (Hardware Accelerated)</option>
+            <option value="cpu">WASM (CPU Only, Slower)</option>
+        </select>
+
+        <!-- context window size, auto-picked based on device RAM below -->
+        <label for="ctx-select" style="font-size:0.9em; font-weight:bold; margin-right: 5px; margin-left: 15px;">Input Length: </label>
+        <select id="ctx-select">
+            <option value="16384">Ultra (16384)</option>
+            <option value="8192">High (8192)</option>
+            <option value="4096">Medium (4096)</option>
+            <option value="2048">Low (2048)</option>
+        </select>
+    </div>
+</header>
+
+<div class="model-bar" id="model-bar">
+    <span style="font-weight: bold; font-size: 0.85em;">Models:</span>
+    <div id="model-buttons" class="model-buttons">
+        <span style="font-size: 0.85em; color: #9ca3af;">Searching...</span>
+    </div>
+</div>
+
+<div class="panel" id="setup-panel">
+    <h3 id="setup-title">Discovering Models...</h3>
+    <div id="progress-container">
+        <div id="progress-bar">0%</div>
+    </div>
+    <button id="start-btn" style="display: none; margin-top: 15px;">Enter Chat</button>
+</div>
+
+<!-- main chat UI, hidden until a model is loaded and user clicks "Enter Chat" -->
+<div class="panel chat-container" id="chat-panel">
+    <div class="messages" id="msgs"></div>
+
+    <!-- little pills showing which .txt files are in the vector store -->
+    <div id="doc-badges-container" style="padding: 0 15px;"></div>
+
+    <div class="input-area" id="input-area">
+        <button id="attach-btn" title="Attach Document or Image" style="padding: 12px; border-radius: 50%; width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 1.2em;">+</button>
+        <input type="file" id="file-upload" accept=".txt" style="display: none;" multiple>
+        <div style="flex: 1; display: flex; flex-direction: column;">
+            <input type="text" id="chat-input" placeholder="Type your message or drop files here..." autocomplete="off">
+            <img id="image-preview" class="image-preview" alt="Preview">
+        </div>
+        <label class="search-toggle" title="Search the web for this message"><input type="checkbox" id="search-toggle">Search</label>
+        <button id="send-btn">Send</button>
+        <button id="reset-btn" class="btn-danger" title="Clear Conversation">Clear</button>
+    </div>
+</div>
+
+<script type="module">
+    // wllama is the wasm/webgpu llama.cpp binding that actually runs the inference
+    import { Wllama } from 'https://cdn.jsdelivr.net/npm/@wllama/wllama@latest/esm/index.js';
+    // transformers.js used for local embedding (used by the document RAG feature)
+    import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@latest';
+
+    // force everything to load from the local ./ folder, no CDN model downloads
+    env.allowRemoteModels = false;
+    env.allowLocalModels = true;
+    env.localModelPath = './';
+
+    // wllama v3.1+ ships one wasm build; multi-threading is runtime-toggled via n_threads
+    // (needs SharedArrayBuffer, i.e. the page must be cross-origin isolated with COOP/COEP headers)
+    const CONFIG_PATHS = {
+        default: 'https://cdn.jsdelivr.net/npm/@wllama/wllama@latest/esm/wasm/wllama.wasm'
+    };
+
+    // hardware profile, filled by detectHardware() before the first model load
+    const hwInfo = {
+        cores: navigator.hardwareConcurrency || 4,
+        ramGB: navigator.deviceMemory || 4,
+        multithreadOK: false,
+        gpuTier: 'none',
+        gpuName: ''
+    };
+
+    async function detectHardware() {
+        // threads > 1 need SharedArrayBuffer, which requires cross-origin isolation
+        hwInfo.multithreadOK = typeof SharedArrayBuffer !== 'undefined' && self.crossOriginIsolated;
+        if (!navigator.gpu) return;
+        try {
+            const adapter = await navigator.gpu.requestAdapter();
+            if (adapter) {
+                // maxBufferSize is the best public hint of gpu memory class (weak iGPU ~256MB, discrete 1GB+)
+                const maxBuf = adapter.limits.maxBufferSize;
+                hwInfo.gpuTier = maxBuf >= (1 << 30) ? 'high' : (maxBuf >= (256 << 20) ? 'mid' : 'low');
+                const info = adapter.info ?? (adapter.requestAdapterInfo ? await adapter.requestAdapterInfo() : null);
+                if (info) hwInfo.gpuName = `${info.vendor || ''} ${info.architecture || ''}`.trim();
+            }
+        } catch (e) {}
+    }
+
+    // pick n_threads / n_batch / n_ubatch / flash_attn from detected hardware
+    function computeEngineSettings(mode, hasImages) {
+        const threads = hwInfo.multithreadOK ? Math.max(1, hwInfo.cores - 1) : 1;
+        let nBatch = 256, nUbatch = 128;
+        if (mode === 'webgpu') {
+            if (hwInfo.gpuTier === 'high') { nBatch = 1024; nUbatch = 512; }
+            else if (hwInfo.gpuTier === 'mid') { nBatch = 512; nUbatch = 256; }
+        } else if (threads > 1) {
+            nBatch = 512; nUbatch = 256;
+        }
+        if (hasImages) nUbatch = Math.max(nUbatch, 512);
+        return { threads, nBatch, nUbatch, flashAttn: mode === 'webgpu' };
+    }
+
+    let wllama = null;
+    let chatHistory = [];
+    let currentMode = 'webgpu';
+    let currentModelUrl = '';
+    let currentModelName = '';
+    let isSetupComplete = false;
+
+    // vision / multimodal stuff - only relevant if the user picks a model with an mmproj file
+    let currentModelSupportsImages = false;
+    let currentProjectorUrl = null;
+    let currentAttachedImage = null;
+
+    // rag: array of { source, text, vector } from uploaded .txt files
+    let documentVectorStore = [];
+    let embeddingPipeline = null;
+
+    // grab all the dom refs once so we're not doing getElementById everywhere
+    const statusEl = document.getElementById('global-status');
+    const setupPanel = document.getElementById('setup-panel');
+    const setupTitle = document.getElementById('setup-title');
+    const progressContainer = document.getElementById('progress-container');
+    const progressBar = document.getElementById('progress-bar');
+    const chatPanel = document.getElementById('chat-panel');
+    const hardwareSelect = document.getElementById('hardware-select');
+    const ctxSelect = document.getElementById('ctx-select');
+    const msgsContainer = document.getElementById('msgs');
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const startBtn = document.getElementById('start-btn');
+    const modelButtonsContainer = document.getElementById('model-buttons');
+    const attachBtn = document.getElementById('attach-btn');
+    const fileUpload = document.getElementById('file-upload');
+    const inputArea = document.getElementById('input-area');
+    const docBadgesContainer = document.getElementById('doc-badges-container');
+    const searchToggle = document.getElementById('search-toggle');
+    const imagePreview = document.getElementById('image-preview');
+
+    let currentCtx = 4096;
+
+    // pick default context window from ram + gpu class, runs after detectHardware()
+    function pickDefaultCtx() {
+        if (hwInfo.ramGB >= 16) currentCtx = 16384;
+        else if (hwInfo.ramGB >= 8) currentCtx = 8192;
+        else if (hwInfo.ramGB >= 4) currentCtx = 4096;
+        else currentCtx = 2048;
+        // weak gpus keep the whole kv cache in vram, cap ctx so the adapter doesn't oom
+        if (hwInfo.gpuTier === 'low') currentCtx = Math.min(currentCtx, 4096);
+        ctxSelect.value = currentCtx.toString();
+    }
+
+    function updateStatus(msg) {
+        statusEl.textContent = msg;
+        console.log("[GuiltFreeAI]", msg);
+    }
+
+    // disable everything during model loads / long operations so the user doesn't double-click
+    function setControlsDisabled(disabled) {
+        chatInput.disabled = disabled;
+        sendBtn.disabled = disabled;
+        resetBtn.disabled = disabled;
+        hardwareSelect.disabled = disabled;
+        ctxSelect.disabled = disabled;
+        attachBtn.disabled = disabled;
+        document.querySelectorAll('.model-btn').forEach(b => b.disabled = disabled);
+    }
+
+    // read models.json from the local directory and build the picker buttons
+    async function discoverModels() {
+        let models = [];
+        try {
+            const res = await fetch('./models.json');
+            if (!res.ok) throw new Error(`models.json not found`);
+            const fileList = await res.json();
+
+            // json can be a plain array of strings OR an array of objects with extra metadata
+            models = fileList.map(item => {
+                if (typeof item === 'string') return { filename: item, supportsImages: false };
+                return item;
+            }).filter(m => m.filename.toLowerCase().endsWith('.gguf'));
+
+            // normalize: every model gets a display name
+            models.forEach(m => {
+                if (!m.name) m.name = m.filename.replace(/\.gguf$/i, '');
+            });
+
+        } catch (e) { console.warn("Unable to load models.json:", e); }
+
+        if (models.length === 0) {
+            updateStatus("🔴 No models found in models.json.");
+            setupTitle.textContent = "No models detected.";
+            return;
+        }
+        renderModelButtons(models);
+        setupTitle.textContent = "Select a model to begin.";
+        updateStatus("Idle. Waiting for model selection.");
+    }
+
+    function renderModelButtons(models) {
+        modelButtonsContainer.innerHTML = '';
+        models.forEach((model) => {
+            const btn = document.createElement('button');
+            btn.className = 'model-btn';
+            // show a camera emoji next to vision-capable models so the user knows images can be added to chat.
+            btn.textContent = model.name + (model.supportsImages ? ' 📸' : '');
+            const fileUrl = `./${model.filename}`;
+
+            btn.addEventListener('click', async () => {
+                // don't reload if it's the same model already in memory
+                if (fileUrl === currentModelUrl && wllama) return;
+                document.querySelectorAll('.model-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                currentModelSupportsImages = model.supportsImages;
+                currentProjectorUrl = model.mmproj ? `./${model.mmproj}` : null;
+                const hfProjectorUrl = model.mmprojHuggingface || null;
+
+                // restrict file picker to images only when the model can actually see them
+                fileUpload.accept = currentModelSupportsImages ? ".txt,image/png,image/jpeg,image/webp" : ".txt";
+
+                currentModelName = model.name;
+                currentModelUrl = fileUrl;
+
+                // if a HuggingFace mirror is provided, try loading from it directly.
+                // credentialless COEP allows cross-origin fetches without CORP headers.
+                if (model.huggingface) {
+                    const remoteLoaded = await initModel(currentMode, model.huggingface, hfProjectorUrl, { suppressErrors: true });
+                    if (remoteLoaded) return;
+                    console.warn(`HuggingFace load failed for ${model.name}, falling back to local file.`);
+                }
+
+                await initModel(currentMode, currentModelUrl, currentProjectorUrl);
+            });
+            modelButtonsContainer.appendChild(btn);
+        });
+    }
+
+	// the big one: tear down any existing wllama instance and load a fresh model.
+    // options.suppressErrors: if true, don't show error status and return false on failure
+    // so the caller can attempt a fallback URL.
+    async function initModel(requestedMode = 'webgpu', modelUrl = currentModelUrl, projectorUrl = currentProjectorUrl, options = {}) {
+        if (!modelUrl) return false;
+        const hasWebGPU = !!navigator.gpu;
+        setControlsDisabled(true);
+        startBtn.style.display = 'none';
+
+        // fallback: if user picked webgpu but the browser doesn't support it, drop to cpu
+        if (requestedMode === 'webgpu' && !hasWebGPU) {
+            requestedMode = 'cpu';
+            hardwareSelect.value = 'cpu';
+        }
+
+        if (wllama) {
+            try { await wllama.exit(); } catch(e) {}
+            wllama = null;
+        }
+
+        const modelName = currentModelName || modelUrl.split('/').pop().replace(/\.gguf$/i, '');
+        setupTitle.textContent = `Loading ${modelName}...`;
+        updateStatus(`Initializing ${modelName}...`);
+        
+        progressContainer.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+
+        try {
+            wllama = new Wllama(CONFIG_PATHS);
+
+            const hw = computeEngineSettings(requestedMode, currentModelSupportsImages);
+            updateStatus(`Loading ${modelName} (${hw.threads}t, batch ${hw.nBatch}/${hw.nUbatch}${hw.flashAttn ? ', flash-attn' : ''})...`);
+            
+            // n_gpu_layers: 99 means "offload everything to gpu" (wllama clamps it)
+            const loadOptions = {
+                n_gpu_layers: requestedMode === 'webgpu' ? 99 : 0,
+                n_ctx: currentCtx,
+                n_threads: hw.threads,
+                n_batch: hw.nBatch,
+                // larger ubatch also helps the image preprocessing path for vision models
+                n_ubatch: hw.nUbatch,
+                flash_attn: hw.flashAttn,
+                progressCallback: ({ loaded, total }) => {
+                    // Log the raw byte progress to the console
+                    console.log(`[Download Progress] Loaded: ${loaded} bytes / Total: ${total} bytes`);
+                    
+                    let pct = 0;
+                    if (total > 0) {
+                        pct = Math.min(100, Math.round((loaded / total) * 100));
+                        progressBar.style.width = pct + '%';
+                        progressBar.textContent = pct + '%';
+                    } else {
+                        // Fallback if content-length is missing from the server response
+                        const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
+                        progressBar.style.width = '100%';
+                        progressBar.textContent = `${mbLoaded} MB`;
+                    }
+                }
+            };
+
+            const modelSource = { url: modelUrl };
+            if (projectorUrl) {
+                modelSource.mmprojUrl = projectorUrl;
+            }
+
+            await wllama.loadModelFromUrl(modelSource, loadOptions);
+
+            // Commit the successful URLs/configurations to global state
+            currentMode = requestedMode;
+            currentModelUrl = modelUrl;
+            currentProjectorUrl = projectorUrl;
+
+            progressContainer.style.display = 'none';
+            updateStatus(`🟢 Loaded: ${modelName} (${currentCtx} ctx)`);
+            setupTitle.textContent = `${modelName} Ready!`;
+            if (!isSetupComplete) startBtn.style.display = 'inline-block';
+            else chatInput.focus();
+            return true;
+
+        } catch (error) {
+            if (!options.suppressErrors) {
+                progressContainer.style.display = 'none';
+                updateStatus("🔴 Error loading model: " + error.message);
+                console.error("[GuiltFreeAI] Model load error:", error);
+            }
+            return false;
+        } finally {
+            setControlsDisabled(false);
+        }
+    }
+
+    (async () => {
+        await detectHardware();
+        if (!navigator.gpu) hardwareSelect.value = 'cpu';
+        pickDefaultCtx();
+        const threading = hwInfo.multithreadOK ? `${hwInfo.cores} threads` : 'single-thread (serve with COOP/COEP headers to enable multithreading)';
+        console.log(`[GuiltFreeAI] hardware: ${hwInfo.ramGB}GB ram, ${hwInfo.cores} cores, ${threading}, gpu: ${hwInfo.gpuTier} ${hwInfo.gpuName}`);
+        discoverModels();
+    })();
+
+    // if the user switches engine or ctx size mid-session, reload the model with new params
+    hardwareSelect.addEventListener('change', async (e) => {
+        currentMode = e.target.value;
+        if (currentModelUrl && wllama) await initModel(currentMode, currentModelUrl, currentProjectorUrl);
+    });
+
+    ctxSelect.addEventListener('change', async (e) => {
+        currentCtx = parseInt(e.target.value);
+        if (currentModelUrl && wllama) await initModel(currentMode, currentModelUrl, currentProjectorUrl);
+    });
+
+    startBtn.addEventListener('click', () => {
+        isSetupComplete = true;
+        setupPanel.style.display = 'none';
+        chatPanel.style.display = 'flex';
+        setControlsDisabled(false);
+        chatInput.focus();
+    });
+
+    resetBtn.addEventListener('click', () => {
+        chatHistory = [];
+        msgsContainer.innerHTML = '';
+        currentAttachedImage = null;
+        imagePreview.style.display = 'none';
+        imagePreview.src = '';
+        updateStatus("🟢 Conversation history cleared.");
+        chatInput.focus();
+    });
+
+    // lazy-load the embedding model only when someone actually uploads a document
+    async function initEmbeddings() {
+        if (!embeddingPipeline) {
+            updateStatus("Loading local embedding model...");
+            // 'embed' is the folder name where i dropped the small encoder weights
+            embeddingPipeline = await pipeline('feature-extraction', 'embed', { quantized: false });
+            updateStatus("Embedding model ready.");
+        }
+    }
+
+    // handles both image attachments and .txt document uploads
+    async function processFile(file) {
+        if (file.type.startsWith('image/')) {
+            if (!currentModelSupportsImages) {
+                updateStatus("🔴 Current model does not support images.");
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                currentAttachedImage = e.target.result;
+                imagePreview.src = currentAttachedImage;
+                imagePreview.style.display = 'block';
+                updateStatus(`🟢 Image attached.`);
+            };
+            reader.readAsDataURL(file);
+            return;
+        }
+
+        // prevent duplicate docs from piling up in the vector store
+        if (Array.from(docBadgesContainer.children).some(b => b.dataset.filename === file.name)) {
+            updateStatus(`Document ${file.name} is already loaded.`);
+            return;
+        }
+
+        setControlsDisabled(true);
+        try {
+            await initEmbeddings();
+        } catch (e) {
+            updateStatus("🔴 Failed to load embedding model. Check folder structure.");
+            console.error(e);
+            setControlsDisabled(false);
+            return;
+        }
+
+        updateStatus(`Processing ${file.name}...`);
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            const text = event.target.result;
+            // chunk into ~1000 char pieces. not perfect tokenization but good enough for this use case
+            const chunks = text.match(/[\s\S]{1,1000}(?!\S)/g) || [text];
+
+            for (const chunk of chunks) {
+                const output = await embeddingPipeline(chunk, { pooling: 'mean', normalize: true });
+                documentVectorStore.push({
+                    source: file.name,
+                    text: chunk,
+                    vector: Array.from(output.data)
+                });
+            }
+
+            // add a little removable badge so the user can see what's loaded
+            const badge = document.createElement('div');
+            badge.className = 'status-badge doc-badge';
+            badge.dataset.filename = file.name;
+            badge.innerHTML = `📄 ${file.name} <span class="doc-remove">✖</span>`;
+
+            badge.querySelector('.doc-remove').addEventListener('click', () => {
+                documentVectorStore = documentVectorStore.filter(doc => doc.source !== file.name);
+                badge.remove();
+                updateStatus(`🟢 Removed ${file.name}.`);
+                if (documentVectorStore.length === 0) chatInput.placeholder = "Type your message or drop files here...";
+            });
+
+            docBadgesContainer.appendChild(badge);
+            chatInput.placeholder = `Ask a question about your documents...`;
+            updateStatus(`🟢 ${file.name} loaded.`);
+            setControlsDisabled(false);
+        };
+        reader.readAsText(file);
+    }
+
+    attachBtn.addEventListener('click', () => fileUpload.click());
+    fileUpload.addEventListener('change', (e) => {
+        Array.from(e.target.files).forEach(file => processFile(file));
+    });
+
+    // drag-and-drop onto the input area
+    inputArea.addEventListener('dragover', (e) => { e.preventDefault(); inputArea.classList.add('drag-active'); });
+    inputArea.addEventListener('dragleave', () => inputArea.classList.remove('drag-active'));
+    inputArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        inputArea.classList.remove('drag-active');
+        Array.from(e.dataTransfer.files).forEach(file => {
+            if (file.name.toLowerCase().endsWith('.txt') || file.type.startsWith('image/')) processFile(file);
+        });
+    });
+
+    function escapeHTML(str) {
+        return str.replace(/[&<>'"]/g, tag => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+        }[tag]));
+    }
+
+    function appendMessage(role, content, isHtml = false) {
+        const div = document.createElement('div');
+        div.className = 'message ' + (role === 'user' ? 'msg-user' : 'msg-ai');
+
+        if (role === 'user' && !isHtml) {
+            div.textContent = content;
+        } else {
+            div.innerHTML = content;
+        }
+
+        msgsContainer.appendChild(div);
+        msgsContainer.scrollTop = msgsContainer.scrollHeight;
+        return div;
+    }
+
+    // --- main send handler ---
+    sendBtn.addEventListener('click', async () => {
+        const rawText = chatInput.value.trim();
+        if (!rawText && !currentAttachedImage) return;
+
+        let displayContent = rawText ? escapeHTML(rawText) : "";
+        if (currentAttachedImage) {
+            displayContent += (displayContent ? '<br>' : '') + `<img src="${currentAttachedImage}" alt="User uploaded image">`;
+        }
+
+        appendMessage('user', displayContent, true);
+        chatHistory.push({
+            role: 'user',
+            content: rawText,
+            ...(currentAttachedImage && { imageUrl: currentAttachedImage })
+        });
+
+        chatInput.value = '';
+        currentAttachedImage = null;
+        imagePreview.style.display = 'none';
+        imagePreview.src = '';
+        setControlsDisabled(true);
+
+        const loadingMsg = appendMessage('ai', '<span class="thinking-indicator">Loading Context...</span>');
+
+        // only keep the last 5 messages in context to stay within token budget.
+        // for vision messages need to re-fetch the dataurl as a byte array for wllama
+        const boundedHistory = await Promise.all(chatHistory.slice(-5).map(async msg => {
+            const formattedMsg = { role: msg.role };
+            if (msg.imageUrl) {
+                // cache decoded bytes on the history entry so we don't refetch every turn
+                if (!msg.imageBytes) msg.imageBytes = await (await fetch(msg.imageUrl)).arrayBuffer();
+                formattedMsg.content = [
+                    { type: "image", data: msg.imageBytes },
+                    { type: "text", text: msg.content }
+                ];
+            } else {
+                formattedMsg.content = msg.content;
+            }
+            return formattedMsg;
+        }));
+
+        // figure out how many tokens we can actually spend.
+        // reserve ~35% of ctx for output, leave 100 tokens as a safety margin.
+        const maxOutputTokens = Math.min(2048, Math.floor(currentCtx * 0.35));
+        const safePromptTokens = currentCtx - maxOutputTokens - 100;
+        // rough chars-to-tokens ratio for english text is ~3.2
+        const maxChars = Math.max(100, Math.floor(safePromptTokens * 3.2));
+
+        let promptText = rawText;
+        let wasTruncated = false;
+
+        // some models (especially Qwen) go off into long "thinking" rambles.
+        // this nudge attempts to keep them shorter.
+        const constraintPrompt = "\n\n(Instruction: Keep your internal reasoning very brief.)";
+
+        try {
+            let webContext = '';
+            if (searchToggle.checked && rawText) {
+                loadingMsg.innerHTML = '<span class="thinking-indicator">Searching the web...</span>';
+                try {
+                    // expects a local /search endpoint (currently ddgs) that returns [{title, href, body}]
+                    const res = await fetch('/search?q=' + encodeURIComponent(rawText));
+                    const data = await res.json();
+                    if (Array.isArray(data) && data.length > 0) {
+                        webContext = data.map((r, i) => `${i + 1}. ${r.title}\n${r.href}\n${r.body}`).join('\n\n');
+                    }
+                } catch (e) {
+                    // notify if search endpoint not running (server not working but page cached in browser)
+                    console.warn('Web search failed:', e);
+                    loadingMsg.innerHTML = '<span class="thinking-indicator">Loading Context...</span>';
+                }
+            }
+
+            // --- document RAG: embed the query, find top-3 chunks, add to the prompt ---
+            if (documentVectorStore.length > 0 && rawText) {
+                const queryOutput = await embeddingPipeline(rawText, { pooling: 'mean', normalize: true });
+                const queryVector = Array.from(queryOutput.data);
+
+                // cosine similarity via dot product (vectors are already normalized)
+                const scoredChunks = documentVectorStore.map(doc => {
+                    const score = doc.vector.reduce((sum, val, i) => sum + val * queryVector[i], 0);
+                    return { ...doc, score };
+                });
+
+                scoredChunks.sort((a, b) => b.score - a.score);
+                const topChunksText = scoredChunks.slice(0, 3).map(c => `[From ${c.source}]:\n${c.text}`).join('\n\n');
+
+                // make sure we don't blow past the char budget with context + question
+                const templateOverhead = 250;
+                const totalLength = topChunksText.length + rawText.length + templateOverhead;
+
+                if (totalLength > maxChars) {
+                    wasTruncated = true;
+                    const allowedChunkChars = Math.max(0, maxChars - rawText.length - templateOverhead);
+                    const truncatedChunks = topChunksText.substring(0, allowedChunkChars) + "...[TRUNCATED]";
+                    promptText = `Use the following document excerpts to answer the question. If the answer is not in the context, say so.\n\nContext:\n${truncatedChunks}\n\nQuestion: ${rawText}${constraintPrompt}`;
+                } else {
+                    promptText = `Use the following document excerpts to answer the question. If the answer is not in the context, say so.\n\nContext:\n${topChunksText}\n\nQuestion: ${rawText}${constraintPrompt}`;
+                }
+
+            } else if (rawText) {
+                const totalLength = rawText.length + constraintPrompt.length;
+                if (totalLength > maxChars) {
+                    wasTruncated = true;
+                    promptText = rawText.substring(0, Math.max(0, maxChars - constraintPrompt.length)) + constraintPrompt;
+                } else {
+                    promptText = rawText + constraintPrompt;
+                }
+            }
+
+            // prepend web search results, cap them at half the budget. May integrate larger searches with RAG later.
+            if (webContext) {
+                const webBudget = Math.max(500, Math.floor(maxChars * 0.5));
+                const trimmedWeb = webContext.length > webBudget
+                    ? webContext.substring(0, webBudget) + '...[TRUNCATED]'
+                    : webContext;
+                promptText = `Web search results:\n${trimmedWeb}\n\n${promptText}`;
+                if (webContext.length > webBudget) wasTruncated = true;
+            }
+
+            // replace the last message's content with composed prompt
+            const lastMsg = boundedHistory[boundedHistory.length - 1];
+            if (Array.isArray(lastMsg.content)) {
+                const textContent = lastMsg.content.find(c => c.type === 'text');
+                if (textContent) textContent.text = promptText;
+            } else {
+                lastMsg.content = promptText;
+            }
+
+            if (wasTruncated) {
+                appendMessage('ai', 'Warning: Input exceeded memory limit and was dynamically truncated.');
+            }
+
+            // sampling params tuned to be somewhat deterministic but not robotic, working well so far.
+            // min_p is probably most important here. These small models need to be constrained tightly. Will integrate per-model config later.
+            const stream = await wllama.createChatCompletion({
+                messages: boundedHistory,
+                max_tokens: maxOutputTokens,
+                temperature: 0.3,
+                top_k: 10,
+                top_p: 0.95,
+                min_p: 0.05,
+                repeat_penalty: 1.1,
+                stream: true
+            });
+
+            let aiReply = "";
+            let tokenCount = 0;
+            const startTime = performance.now();
+            loadingMsg.innerHTML = "";
+
+            // strip <think> / |thought_start| blocks from display (kept in chatHistory for context, may add ability for user to expand them later.)
+            const THOUGHT_REGEX = /&lt;(?:think|thought|\|?thought_start\|?)&gt;([\s\S]*?)(?:&lt;\/(?:think|thought|\|?thought_end\|?)&gt;|$)/gi;
+            const renderReply = () => {
+                loadingMsg.innerHTML = escapeHTML(aiReply).replace(THOUGHT_REGEX, '');
+                msgsContainer.scrollTop = msgsContainer.scrollHeight;
+            };
+            // repaint at most once per frame instead of once per token:
+            // re-escaping + re-parsing the full reply every chunk is O(n^2)
+            let renderQueued = false;
+            let renderFrameId = null;
+            const scheduleRender = () => {
+                if (renderQueued) return;
+                renderQueued = true;
+                renderFrameId = requestAnimationFrame(() => { renderQueued = false; renderReply(); });
+            };
+
+            for await (const chunk of stream) {
+                aiReply += chunk.choices[0].delta?.content || "";
+                tokenCount++;
+                scheduleRender();
+            }
+
+            if (renderFrameId) cancelAnimationFrame(renderFrameId);
+            renderReply();
+
+            const endTime = performance.now();
+            const timeSec = (endTime - startTime) / 1000;
+            const tps = timeSec > 0 ? (tokenCount / timeSec).toFixed(1) : 0;
+
+            chatHistory.push({ role: 'assistant', content: aiReply });
+
+            // little footer showing engine and speed
+            const meta = document.createElement('span');
+            meta.className = 'msg-meta';
+            meta.textContent = `${currentMode === 'webgpu' ? '⚡ WebGPU' : '🐢 WASM CPU'} • ${tps} tps`;
+            loadingMsg.appendChild(document.createElement('br'));
+            loadingMsg.appendChild(meta);
+
+        } catch (e) {
+            loadingMsg.textContent = "Error generating response.";
+            console.error(e);
+        } finally {
+            setControlsDisabled(false);
+            chatInput.focus();
+            msgsContainer.scrollTop = msgsContainer.scrollHeight;
+        }
+    });
+
+    // enter to send (but not shift+enter, though there's no textarea so it doesn't matter)
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendBtn.click();
+    });
+</script>
+</body>
+</html>
