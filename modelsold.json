@@ -1,6 +1,0 @@
-[
-  { "filename": "low.gguf", "name": "Low", "huggingface": "https://huggingface.co/HolophonicStudios/MiniCPM5-1b-Opus-Fable-Thinking-Q_4_K_M/resolve/main/MiniCPM5-1b-Opus-Fable-Thinking-Q_4_K_M.gguf", "supportsImages": false },
-  { "filename": "medium.gguf", "name": "Medium", "huggingface": "https://huggingface.co/openbmb/MiniCPM5-2B-GGUF/resolve/main/MiniCPM5-2B-Q4_K_M.gguf", "supportsImages": false },
-  { "filename": "high.gguf", "name": "High", "huggingface": "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf", "supportsImages": false },
-  { "filename": "high.gguf", "name": "High Multimodal", "huggingface": "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf", "supportsImages": true, "mmproj": "high-mmproj.gguf" }
-]
