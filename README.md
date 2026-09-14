@@ -44,4 +44,4 @@ GuiltFreeAI is hosted at GuiltFreeAI.net and GuiltFreeAI.com. To use, simply vis
 
 ## Host GuiltFreeAI
 
-Want to locally host GuiltFreeAI yourself? Make sure you have Python installed. Run "pip install -r requirements.txt", and then server.py. You will have access at localhost:8080.
+Want to locally host GuiltFreeAI yourself? Make sure you have Python installed. Clone the repo, run "pip install -r requirements.txt", and then server.py. You will have access at localhost:8080.
